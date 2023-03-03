@@ -1,5 +1,6 @@
 # Client side of messenger app
 
+
 import socket
 import select
 import sys
@@ -19,7 +20,7 @@ def main():
     
     while True:
         sockets_list = [sys.stdin, server]
-        read_sockets, write_socket, error_socket = select.select(sockets_list,[],[])
+        read_sockets, write_socket, error_socket = select.select(sockets_list, [], [])
     
         for read_socket in read_sockets:
             if read_socket == server:
