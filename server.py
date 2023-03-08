@@ -4,7 +4,13 @@
 #   https://pypi.org/project/DoubleRatchet/
 #   https://github.com/Syndace/python-doubleratchet
 
+# The python rsa package used to implement the rsa algorithm:
+#   https://pypi.org/project/rsa/
+#   https://www.section.io/engineering-education/rsa-encryption-and-decryption-in-python/
+
 # pip3 install DoubleRatchet
+
+# pip install rsa
 
 # ***To do***
 # The sockets are not communicating properly at the moment. Need to read into this: 
@@ -24,6 +30,7 @@ import asyncio
 import socket
 import sys
 import threading
+import rsa
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.x448 import X448PrivateKey
@@ -110,7 +117,41 @@ dr_configuration: Dict[str, Any] = {
     "aead": AEAD
 }
 
+# The following is python-rsa
+#===============================================================
 
+def generateKeys():
+    (publicKey, PrivateKey) = rsa.newkeys(1024)
+    with open('keys/publicKey.pem', 'wb') as p:
+        p.write(publicKey.save_pkcs1('PEM'))
+    with open('keys/privateKey.pem', 'wb') as p:
+        p.write(PrivateKey.save_pkcs1('PEM'))
+
+def loadKeys():
+    with open('keys/publicKey.pem', 'rb') as p:
+        publicKey = rsa.PublicKey.load_pkcs1(p.read())
+    with open('keys/privateKey.pem', 'rb') as p:
+        privateKey = rsa.PrivateKey.load_pkcs1(p.read())
+    return privateKey, publicKey
+
+def encrypt(message, key):
+    return rsa.encrypt(message.encode('ascii'), key)
+
+def decrypt(ciphertext, key):
+    try:
+        return rsa.decrypt(ciphertext, key).decode('ascii')
+    except:
+        return False
+    
+def sign(message, key):
+        return rsa.sign(message.encode('ascii'), key, 'SHA-256')
+
+def verify(message, signature, key):
+    try:
+        return rsa.verify(message.encode('ascii'), signature, key,) == 'SHA-256'
+    except:
+        return False
+    
 # Messenger functionality starts here:
 #===============================================================
 
