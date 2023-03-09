@@ -8,9 +8,14 @@
 #   https://pypi.org/project/rsa/
 #   https://www.section.io/engineering-education/rsa-encryption-and-decryption-in-python/
 
+# The python TwoFish package used to implement the TwoFish algorithm:
+#   https://pypi.org/project/twofish/
+
 # pip3 install DoubleRatchet
 
 # pip install rsa
+
+# pip install twofish
 
 # ***To do***
 # The sockets are not communicating properly at the moment. Need to read into this: 
@@ -120,37 +125,38 @@ dr_configuration: Dict[str, Any] = {
 # The following is python-rsa
 #===============================================================
 
-def generateKeys():
-    (publicKey, PrivateKey) = rsa.newkeys(1024)
-    with open('keys/publicKey.pem', 'wb') as p:
-        p.write(publicKey.save_pkcs1('PEM'))
-    with open('keys/privateKey.pem', 'wb') as p:
-        p.write(PrivateKey.save_pkcs1('PEM'))
+class RSA(rsa):
+    def generateKeys():
+        (publicKey, PrivateKey) = rsa.newkeys(1024)
+        with open('keys/publicKey.pem', 'wb') as p:
+            p.write(publicKey.save_pkcs1('PEM'))
+        with open('keys/privateKey.pem', 'wb') as p:
+            p.write(PrivateKey.save_pkcs1('PEM'))
 
-def loadKeys():
-    with open('keys/publicKey.pem', 'rb') as p:
-        publicKey = rsa.PublicKey.load_pkcs1(p.read())
-    with open('keys/privateKey.pem', 'rb') as p:
-        privateKey = rsa.PrivateKey.load_pkcs1(p.read())
-    return privateKey, publicKey
+    def loadKeys():
+        with open('keys/publicKey.pem', 'rb') as p:
+            publicKey = rsa.PublicKey.load_pkcs1(p.read())
+        with open('keys/privateKey.pem', 'rb') as p:
+            privateKey = rsa.PrivateKey.load_pkcs1(p.read())
+        return privateKey, publicKey
 
-def encrypt(message, key):
-    return rsa.encrypt(message.encode('ascii'), key)
+    def encrypt(message, key):
+        return rsa.encrypt(message.encode('ascii'), key)
 
-def decrypt(ciphertext, key):
-    try:
-        return rsa.decrypt(ciphertext, key).decode('ascii')
-    except:
-        return False
-    
-def sign(message, key):
-        return rsa.sign(message.encode('ascii'), key, 'SHA-256')
+    def decrypt(ciphertext, key):
+        try:
+            return rsa.decrypt(ciphertext, key).decode('ascii')
+        except:
+            return False
+        
+    def sign(message, key):
+            return rsa.sign(message.encode('ascii'), key, 'SHA-256')
 
-def verify(message, signature, key):
-    try:
-        return rsa.verify(message.encode('ascii'), signature, key,) == 'SHA-256'
-    except:
-        return False
+    def verify(message, signature, key):
+        try:
+            return rsa.verify(message.encode('ascii'), signature, key,) == 'SHA-256'
+        except:
+            return False
     
 # Messenger functionality starts here:
 #===============================================================
@@ -199,57 +205,67 @@ async def main():
 
     server.close()
 
+# Variable to change encryption type
+cryptType = 1 
 
-async def client_thread(server, clients, connection, address, associated_data, shared_secret) -> None:
-    connection.send(bytes("You are connected.", "utf-8"))
-
-    ratchet_private = X448PrivateKey.generate()
-    ratchet_public = ratchet_private.public_key()
-
-    initial_message = "This is the initial message.".encode("UTF-8")
-
-    _, initial_message_encrypted = await DoubleRatchet.encrypt_initial_message(
-        shared_secret=shared_secret,
-        recipient_ratchet_pub=ratchet_public.public_bytes(
-            encoding=serialization.Encoding.Raw,
-            format=serialization.PublicFormat.Raw
-        ),
-        message=initial_message,
-        associated_data=associated_data,
-        **dr_configuration
-    )
-
-    double_ratchet, initial_message_decrypted = await DoubleRatchet.decrypt_initial_message(
-        shared_secret=shared_secret,
-        own_ratchet_priv=ratchet_private.private_bytes(
-            encoding=serialization.Encoding.Raw,
-            format=serialization.PrivateFormat.Raw,
-            encryption_algorithm=serialization.NoEncryption()
-        ),
-        message=initial_message_encrypted,
-        associated_data=associated_data,
-        **dr_configuration
-    )
-
-    assert initial_message == initial_message_decrypted
+# RSA Implementation 
+if(cryptType == 2):
+    async def clinet_thread(server, clients, connection, address, associated_data, shared_secret) -> None:
+        connection.send(bytes("You are connected.", "utf-8"))
 
 
-    while True:
-        try:
-            message_tosend = connection.recv(2048)
-            if message_tosend:
-                to_send = "[" + address[0] + "] " + str(message_tosend)
-                encrypted_message = double_ratchet.encrypt_message(
-                    to_send.encode("UTF-8"), 
-                    associated_data
-                )
-                print(to_send, "Enc:", encrypted_message)
-                broadcast(clients, connection, encrypted_message)
-            else:
-                if connection in clients:
-                    clients.remove(connection)
-        except:
-            continue
+# Double Ratchet Implementation
+if(cryptType == 1):
+    async def client_thread(server, clients, connection, address, associated_data, shared_secret) -> None:
+        connection.send(bytes("You are connected.", "utf-8"))
+
+        ratchet_private = X448PrivateKey.generate()
+        ratchet_public = ratchet_private.public_key()
+
+        initial_message = "This is the initial message.".encode("UTF-8")
+
+        _, initial_message_encrypted = await DoubleRatchet.encrypt_initial_message(
+            shared_secret=shared_secret,
+            recipient_ratchet_pub=ratchet_public.public_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PublicFormat.Raw
+            ),
+            message=initial_message,
+            associated_data=associated_data,
+            **dr_configuration
+        )
+
+        double_ratchet, initial_message_decrypted = await DoubleRatchet.decrypt_initial_message(
+            shared_secret=shared_secret,
+            own_ratchet_priv=ratchet_private.private_bytes(
+                encoding=serialization.Encoding.Raw,
+                format=serialization.PrivateFormat.Raw,
+                encryption_algorithm=serialization.NoEncryption()
+            ),
+            message=initial_message_encrypted,
+            associated_data=associated_data,
+            **dr_configuration
+        )
+
+        assert initial_message == initial_message_decrypted
+
+
+        while True:
+            try:
+                message_tosend = connection.recv(2048)
+                if message_tosend:
+                    to_send = "[" + address[0] + "] " + str(message_tosend)
+                    encrypted_message = double_ratchet.encrypt_message(
+                        to_send.encode("UTF-8"), 
+                        associated_data
+                    )
+                    print(to_send, "Enc:", encrypted_message)
+                    broadcast(clients, connection, encrypted_message)
+                else:
+                    if connection in clients:
+                        clients.remove(connection)
+            except:
+                continue
 
 
 def broadcast(clients, connection, message) -> None:
