@@ -6,6 +6,7 @@
 
 # The python rsa package used to implement the rsa algorithm:
 #   https://pypi.org/project/rsa/
+#   https://github.com/sybrenstuvel/python-rsa
 #   https://www.section.io/engineering-education/rsa-encryption-and-decryption-in-python/
 
 # The python TwoFish package used to implement the TwoFish algorithm:
@@ -213,6 +214,36 @@ if(cryptType == 2):
     async def clinet_thread(server, clients, connection, address, associated_data, shared_secret) -> None:
         connection.send(bytes("You are connected.", "utf-8"))
 
+        RSA.generateKeys()
+        privateKey, publicKey = RSA.loadKeys()
+
+        initial_message = "This is the initial message."
+        ciphertext = await RSA.encrypt(initial_message, publicKey)
+
+        signature = RSA.sign(initial_message, privateKey)
+
+        rsa, initial_message_decrypted = await RSA.decrypt(ciphertext, privateKey)
+
+        assert initial_message == initial_message_decrypted
+
+        while True:
+            try:
+                message_tosend = connection.recv(2048)
+                if message_tosend:
+                    # I believe this section is what needs to be finished
+                    to_send = "[" + address[0] + "] " + str(message_tosend)
+                    encrypted_message = rsa.encrypt(
+                        to_send.encode("UTF-8"), 
+                        associated_data
+                    )
+                    #
+                    print(to_send, "Enc:", encrypted_message)
+                    broadcast(clients, connection, encrypted_message)
+                else:
+                    if connection in clients:
+                        clients.remove(connection)
+            except:
+                continue
 
 # Double Ratchet Implementation
 if(cryptType == 1):
