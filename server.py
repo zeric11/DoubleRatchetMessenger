@@ -142,20 +142,20 @@ class RSA(rsa):
         return privateKey, publicKey
 
     def encrypt(message, key):
-        return rsa.encrypt(message.encode('ascii'), key)
+        return rsa.encrypt(message.encode("ASCII"), key)
 
     def decrypt(ciphertext, key):
         try:
-            return rsa.decrypt(ciphertext, key).decode('ascii')
+            return rsa.decrypt(ciphertext, key).decode("ASCII")
         except:
             return False
         
     def sign(message, key):
-            return rsa.sign(message.encode('ascii'), key, 'SHA-256')
+            return rsa.sign(message.encode("ASCII"), key, 'SHA-256')
 
     def verify(message, signature, key):
         try:
-            return rsa.verify(message.encode('ascii'), signature, key,) == 'SHA-256'
+            return rsa.verify(message.encode("ASCII"), signature, key,) == 'SHA-256'
         except:
             return False
     
@@ -222,21 +222,20 @@ if(cryptType == 2):
 
         signature = RSA.sign(initial_message, privateKey)
 
-        rsa, initial_message_decrypted = await RSA.decrypt(ciphertext, privateKey)
+        initial_message_decrypted = await RSA.decrypt(ciphertext, privateKey)
 
         assert initial_message == initial_message_decrypted
+        assert RSA.verify(initial_message, signature, publicKey) == True
 
         while True:
             try:
                 message_tosend = connection.recv(2048)
                 if message_tosend:
-                    # I believe this section is what needs to be finished
                     to_send = "[" + address[0] + "] " + str(message_tosend)
-                    encrypted_message = rsa.encrypt(
+                    encrypted_message = RSA.encrypt(
                         to_send.encode("UTF-8"), 
-                        associated_data
+                        publicKey
                     )
-                    #
                     print(to_send, "Enc:", encrypted_message)
                     broadcast(clients, connection, encrypted_message)
                 else:
