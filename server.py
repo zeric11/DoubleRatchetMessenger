@@ -4,42 +4,24 @@
 #   https://pypi.org/project/DoubleRatchet/
 #   https://github.com/Syndace/python-doubleratchet
 
-# The python rsa package used to implement the rsa algorithm:
-#   https://pypi.org/project/rsa/
-#   https://github.com/sybrenstuvel/python-rsa
-#   https://www.section.io/engineering-education/rsa-encryption-and-decryption-in-python/
-
-# The python TwoFish package used to implement the TwoFish algorithm:
-#   https://pypi.org/project/twofish/
-
 # pip3 install DoubleRatchet
 
-# pip install rsa
-
-# pip install twofish
-
-# ***To do***
-# The sockets are not communicating properly at the moment. Need to read into this: 
-#    https://stackoverflow.com/questions/48506460/python-simple-socket-client-server-using-asyncio
-
-# Encryption seems to be working, but without the sockets communicating, 
-# we cannot yet test decryption.
-
-# When the clients join the chat, the program needs to be altered so that
-# the DoubleRatchet object for each client is created at the same time
-# instead of separately.
+# Requirements for python-doubleratchet:
+#   cryptography>=3.3.2
+#   pydantic>=1.7.4
+#   typing-extensions>=4.3.0
 
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import asyncio
 import socket
+import select
 import sys
 import threading
-import rsa
 
 from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric.x448 import X448PrivateKey
+from cryptography.hazmat.primitives.asymmetric.x448 import X448PrivateKey, X448PublicKey
 from doubleratchet import DoubleRatchet as DR, EncryptedMessage, Header
 from doubleratchet.recommended import (
     aead_aes_hmac,
@@ -123,191 +105,180 @@ dr_configuration: Dict[str, Any] = {
     "aead": AEAD
 }
 
-# The following is python-rsa
-#===============================================================
 
-class RSA(rsa):
-    def generateKeys():
-        (publicKey, PrivateKey) = rsa.newkeys(1024)
-        with open('keys/publicKey.pem', 'wb') as p:
-            p.write(publicKey.save_pkcs1('PEM'))
-        with open('keys/privateKey.pem', 'wb') as p:
-            p.write(PrivateKey.save_pkcs1('PEM'))
-
-    def loadKeys():
-        with open('keys/publicKey.pem', 'rb') as p:
-            publicKey = rsa.PublicKey.load_pkcs1(p.read())
-        with open('keys/privateKey.pem', 'rb') as p:
-            privateKey = rsa.PrivateKey.load_pkcs1(p.read())
-        return privateKey, publicKey
-
-    def encrypt(message, key):
-        return rsa.encrypt(message.encode("ASCII"), key)
-
-    def decrypt(ciphertext, key):
-        try:
-            return rsa.decrypt(ciphertext, key).decode("ASCII")
-        except:
-            return False
-        
-    def sign(message, key):
-            return rsa.sign(message.encode("ASCII"), key, 'SHA-256')
-
-    def verify(message, signature, key):
-        try:
-            return rsa.verify(message.encode("ASCII"), signature, key,) == 'SHA-256'
-        except:
-            return False
-    
 # Messenger functionality starts here:
 #===============================================================
 
-async def main():
-    if len(sys.argv) != 3:
-        print("Must provide IP Address and Port Number")
+class Client():
+    def __init__(self, connection=None, address=None) -> None:
+        self.connection = connection
+        self.address = address
+        self.double_ratchet: DoubleRatchet = None
+
+    def get_encrypted_message(self, message: bytes, associated_data: bytes) -> EncryptedMessage:
+        return self.double_ratchet.encrypt_message(message, associated_data)
+
+    def send_encrypted_message(self, encrypted_message: EncryptedMessage) -> None:
+        to_send = encrypted_message.header.ratchet_pub  # len == 56
+        to_send += encrypted_message.header.previous_sending_chain_length.to_bytes(10, "big")
+        to_send += encrypted_message.header.sending_chain_length.to_bytes(10, "big")
+        to_send += encrypted_message.ciphertext
+        self.connection.send(to_send)
+
+    async def send_message(self, message: bytes, associated_data: bytes) -> None:
+        encrypted_message = await self.get_encrypted_message(message, associated_data)
+        self.send_encrypted_message(encrypted_message)
+
+    async def get_decrypted_message(self, encrypted_message: EncryptedMessage, associated_data: bytes) -> bytes:
+        return await self.double_ratchet.decrypt_message(encrypted_message, associated_data)
+
+
+def main():
+    if len(sys.argv) != 4:
+        print("Correct usage: python3 client.py [IP ADDRESS] [PORT] [PASSWORD]")
         return
     
     ip_address = str(sys.argv[1])
     port = int(sys.argv[2])
+    password = str(sys.argv[3])
+
+    # The shared secret must be 32 bytes, 
+    # so the password cannot be more than 32 bytes long.
+    # To create the shared secret from the password,
+    # the password must be extended to 32 bytes if
+    # it is not already 32 characters long.
+    assert len(password) <= 32 
+
+    associated_data = "Some Associated Data".encode("ASCII")
+    shared_secret = extend_to_32_char(password).encode("ASCII")
 
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    #server.bind((ip_address, port))
-    server.bind(("0.0.0.0", 6677)) 
-    server.listen(2)
+    server.bind((ip_address, port))
+    server.listen(10) # Max of 10 clients
 
-    associated_data = "Some Associated Data".encode("ASCII")
-    shared_secret = "This is supposed to be 32 bytes.".encode("ASCII")
+    print("Server running...\n")
 
     clients = []
-    threads = []
-    while len(threads) < 2:
+    while True:
         connection, address = server.accept()
-        clients.append(connection)
-        print(address[0] + " connected")
-        '''
+        client = Client(connection, address)
+        clients.append(client)
+
+        # When a client connects, a new thread is started to handle
+        # communication between the server and client.
         new_client_thread = threading.Thread(
-            target=client_thread, 
-            args=(server, clients, connection, address, associated_data, shared_secret)
+            target=client_thread_loop, 
+            args=(server, clients, client, associated_data, shared_secret)
         )
         new_client_thread.start()
-        '''
-        threads.append(asyncio.create_task(client_thread(
-            server, 
-            clients, 
-            connection, 
-            address, 
-            associated_data, 
-            shared_secret
-        )))
-        
-    await asyncio.wait(threads)
 
     server.close()
 
-# Variable to change encryption type
-cryptType = 1 
 
-# RSA Implementation 
-if(cryptType == 2):
-    async def clinet_thread(server, clients, connection, address) -> None:
-        connection.send(bytes("You are connected.", "utf-8"))
-
-        RSA.generateKeys()
-        privateKey, publicKey = RSA.loadKeys()
-
-        initial_message = "This is the initial message."
-        ciphertext = await RSA.encrypt(initial_message, publicKey)
-
-        # signature = RSA.sign(initial_message, privateKey)
-
-        initial_message_decrypted = await RSA.decrypt(ciphertext, privateKey)
-
-        assert initial_message == initial_message_decrypted
-        # assert RSA.verify(initial_message, signature, publicKey) == True
-
-        while True:
-            try:
-                message_tosend = connection.recv(2048)
-                if message_tosend:
-                    to_send = "[" + address[0] + "] " + str(message_tosend)
-                    encrypted_message = RSA.encrypt(
-                        to_send.encode("UTF-8"), 
-                        publicKey
-                    )
-                    print(to_send, "Enc:", encrypted_message)
-                    broadcast(clients, connection, encrypted_message)
-                else:
-                    if connection in clients:
-                        clients.remove(connection)
-            except:
-                continue
-
-# Double Ratchet Implementation
-if(cryptType == 1):
-    async def client_thread(server, clients, connection, address, associated_data, shared_secret) -> None:
-        connection.send(bytes("You are connected.", "utf-8"))
-
-        ratchet_private = X448PrivateKey.generate()
-        ratchet_public = ratchet_private.public_key()
-
-        initial_message = "This is the initial message.".encode("UTF-8")
-
-        _, initial_message_encrypted = await DoubleRatchet.encrypt_initial_message(
-            shared_secret=shared_secret,
-            recipient_ratchet_pub=ratchet_public.public_bytes(
-                encoding=serialization.Encoding.Raw,
-                format=serialization.PublicFormat.Raw
-            ),
-            message=initial_message,
-            associated_data=associated_data,
-            **dr_configuration
-        )
-
-        double_ratchet, initial_message_decrypted = await DoubleRatchet.decrypt_initial_message(
-            shared_secret=shared_secret,
-            own_ratchet_priv=ratchet_private.private_bytes(
-                encoding=serialization.Encoding.Raw,
-                format=serialization.PrivateFormat.Raw,
-                encryption_algorithm=serialization.NoEncryption()
-            ),
-            message=initial_message_encrypted,
-            associated_data=associated_data,
-            **dr_configuration
-        )
-
-        assert initial_message == initial_message_decrypted
+def extend_to_32_char(message: str) -> str:
+    message += " " * (32 - len(message))
+    return message
 
 
-        while True:
-            try:
-                message_tosend = connection.recv(2048)
-                if message_tosend:
-                    to_send = "[" + address[0] + "] " + str(message_tosend)
-                    encrypted_message = double_ratchet.encrypt_message(
-                        to_send.encode("UTF-8"), 
-                        associated_data
-                    )
-                    print(to_send, "Enc:", encrypted_message)
-                    broadcast(clients, connection, encrypted_message)
-                else:
-                    if connection in clients:
-                        clients.remove(connection)
-            except:
-                continue
+def client_thread_loop(server, clients: List[Client], client: Client, associated_data, shared_secret) -> None:
+    asyncio.run(client_thread(server, clients, client, associated_data, shared_secret))
 
 
-def broadcast(clients, connection, message) -> None:
+async def client_thread(server, clients: List[Client], client: Client, associated_data, shared_secret) -> None:
+    # When a connections is established, the client generates a public key
+    # and sends it over to the server. The server then uses this key, along
+    # with the shared secret that was derived from the password, to create
+    # a Double Ratchet object on the server side associated said client,
+    # and an encrypted initial message. This encrypted initial message is
+    # then sent to the client were it is decrypted in order to generate the
+    # client-side Double Ratchet object that is synced with server's.
+
+    ratchet_public = X448PublicKey.from_public_bytes(client.connection.recv(2048))
+    
+    initial_message = bytes("Welcome to the Double-Ratchet messenger.", "utf-8")
+
+    server_double_ratchet, initial_message_encrypted = await DoubleRatchet.encrypt_initial_message(
+        shared_secret=shared_secret,
+        recipient_ratchet_pub=ratchet_public.public_bytes(
+            encoding=serialization.Encoding.Raw,
+            format=serialization.PublicFormat.Raw
+        ),
+        message=initial_message,
+        associated_data=associated_data,
+        **dr_configuration
+    )
+
+    client.double_ratchet = server_double_ratchet
+
+    client.send_encrypted_message(initial_message_encrypted)
+
+    await client.send_message(bytes(str(len(clients)) + " user(s) connected\n", "utf-8"), associated_data)
+
+    connected_message = client.address[0] + " connected, " + str(len(clients)) + " user(s) connected\n"
+    print(connected_message)
+    await broadcast(clients, client, bytes(connected_message, "utf-8"), associated_data)
+
+    # Now that the server created a Double Ratchet synced with a particular
+    # client, the server will begin listening for incoming messages. When
+    # a message is found, the Double Ratchet is used to encrypt the message 
+    # before it is sent to every other connected client.
+
+    exit_client = False
+    while not exit_client:
+        try:
+            encrypted_message_stream = client.connection.recv(2048)
+            if encrypted_message_stream:
+                encrypted_message = construct_encrypted_message(encrypted_message_stream)
+                decrypted_message = await client.get_decrypted_message(encrypted_message, associated_data)
+    
+                if str(decrypted_message, "utf-8") == "EXIT":
+                    await remove_client(clients, client, associated_data)
+                    exit_client = True
+                    break
+
+                print("Enc:", encrypted_message.ciphertext)
+                print("Dec:", str(decrypted_message, "utf-8"))
+
+                await broadcast(clients, client, decrypted_message, associated_data)
+            else:
+                await remove_client(clients, client, associated_data)
+        except:
+            continue
+
+
+async def broadcast(clients: List[Client], message_author: Client, message: bytes, associated_data: bytes) -> None:
     for client in clients:
-        if client != connection:
+        if message_author == None or client is not message_author:
             try:
-                client.send(message)
+                await client.send_message(message, associated_data)
             except:
-                client.close()
-                if connection in clients:
-                    clients.remove(connection)
+                remove_client(clients, client, associated_data)
+
+
+async def remove_client(clients: List[Client], to_remove: Client, associated_data: bytes) -> None:
+    to_remove.connection.close()
+    if to_remove in clients:
+        clients.remove(to_remove)
+    disconnected_message = to_remove.address[0] + " disconnected, " + str(len(clients)) + " user(s) connected\n"
+    print(disconnected_message)
+    await broadcast(clients, None, bytes(disconnected_message, "utf-8"), associated_data)
+    
+
+def construct_encrypted_message(encrypted_message_stream: bytes) -> EncryptedMessage:
+    ratchet_pub = encrypted_message_stream[0:56]
+    previous_sending_chain_length = int.from_bytes(encrypted_message_stream[56:66], "big")
+    sending_chain_length = int.from_bytes(encrypted_message_stream[66:76], "big")
+    ciphertext = encrypted_message_stream[76:]
+    return EncryptedMessage(
+        Header(
+            ratchet_pub, 
+            previous_sending_chain_length, 
+            sending_chain_length), 
+        ciphertext
+    )
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
