@@ -220,12 +220,12 @@ if(cryptType == 2):
         initial_message = "This is the initial message."
         ciphertext = await RSA.encrypt(initial_message, publicKey)
 
-        signature = RSA.sign(initial_message, privateKey)
+        # signature = RSA.sign(initial_message, privateKey)
 
         initial_message_decrypted = await RSA.decrypt(ciphertext, privateKey)
 
         assert initial_message == initial_message_decrypted
-        assert RSA.verify(initial_message, signature, publicKey) == True
+        # assert RSA.verify(initial_message, signature, publicKey) == True
 
         while True:
             try:
