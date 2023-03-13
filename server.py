@@ -211,7 +211,7 @@ cryptType = 1
 
 # RSA Implementation 
 if(cryptType == 2):
-    async def clinet_thread(server, clients, connection, address, associated_data, shared_secret) -> None:
+    async def clinet_thread(server, clients, connection, address) -> None:
         connection.send(bytes("You are connected.", "utf-8"))
 
         RSA.generateKeys()
