@@ -4,12 +4,7 @@
 #   https://pypi.org/project/DoubleRatchet/
 #   https://github.com/Syndace/python-doubleratchet
 
-# pip3 install DoubleRatchet
-
-# Requirements for python-doubleratchet:
-#   cryptography>=3.3.2
-#   pydantic>=1.7.4
-#   typing-extensions>=4.3.0
+# pip3 install -r requirements.txt
 
 
 from typing import Any, Dict,  List
@@ -147,16 +142,16 @@ async def main():
 
     server.send(ratchet_public.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw))
     
-    initial_message_recieved = False
+    initial_message_received = False
     encrypted_message_stream = None
-    while not initial_message_recieved:
+    while not initial_message_received:
         sockets_list = [sys.stdin, server]
         read_sockets, write_socket, error_socket = select.select(sockets_list, [], [])
 
         for read_socket in read_sockets:
             if read_socket == server:
                 encrypted_message_stream = read_socket.recv(2048)
-                initial_message_recieved = True
+                initial_message_received = True
 
     initial_message_encrypted = construct_encrypted_message(encrypted_message_stream)
 

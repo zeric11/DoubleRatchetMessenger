@@ -4,12 +4,7 @@
 #   https://pypi.org/project/DoubleRatchet/
 #   https://github.com/Syndace/python-doubleratchet
 
-# pip3 install DoubleRatchet
-
-# Requirements for python-doubleratchet:
-#   cryptography>=3.3.2
-#   pydantic>=1.7.4
-#   typing-extensions>=4.3.0
+# pip3 install -r requirements.txt
 
 
 from typing import Any, Dict, List
